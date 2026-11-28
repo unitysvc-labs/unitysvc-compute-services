@@ -1,0 +1,128 @@
+{
+  "capabilities": [
+    "coding-time-tracking | Receives WakaTime-protocol heartbeats from editor plugins and reports the time spent per project, language, editor, machine and operating system on a dashboard and through a REST API."
+  ],
+  "currency": "USD",
+  "description": "UnitySVC runs the official Wakapi image in a separate container for each enrollment, with its own HTTPS address. Wakapi is a self-hosted backend for coding-time statistics that speaks the WakaTime protocol: the WakaTime plugins for editors and IDEs send it a heartbeat while you work, and Wakapi turns the heartbeats into time per project, language, editor, machine and operating system, shown on a dashboard and available through a REST API, with badges, project labels and aliases, and an import from WakaTime. Everything is kept in the instance's own SQLite database, stored in the `wakapi` folder of your home, so it survives stopping the instance and even removing it and enrolling again.\n\nEnroll in the base channel and keep or replace the generated password salt. Wakapi has no administrator account set from the enrollment: accounts are created by sign-up, and the first account is the administrator. So sign-up starts open; open `https://<instance>/` as soon as the instance is ready, sign up, then set **Allow sign-up** to `false`. Copy your API key from the dashboard and put it, with `https://<instance>/api` as the `api_url`, in `~/.wakatime.cfg`. No mail server is configured, so there are no password-reset mails or weekly reports. You can run one Wakapi instance at a time. See How to use this service for full setup and limitations.\n\nYou pay the selected channel's platform compute cost while the instance runs, including idle time, and the platform keeps the data in your home while it is stopped. Labs adds no markup and receives no seller payout. See the upstream Wakapi documentation and issue tracker for software-specific help.",
+  "details": {
+    "features": [
+      "Works with the WakaTime plugins for editors and IDEs",
+      "Dashboard of coding time by project, language, editor, machine and operating system",
+      "REST API, partly WakaTime-compatible, with an API key per user",
+      "Badges, project labels and aliases",
+      "Import of existing data from WakaTime",
+      "Your data is kept in your home, across stops, restarts and re-enrollment"
+    ],
+    "links": {
+      "documentation": "https://github.com/muety/wakapi#readme",
+      "homepage": "https://wakapi.dev",
+      "source_code": "https://github.com/muety/wakapi"
+    },
+    "protocols": [
+      "http"
+    ]
+  },
+  "instance_spec": "compose.yaml",
+  "name": "wakapi",
+  "payout_price": {
+    "description": "At cost: UnitySVC Labs receives no seller payout",
+    "price": "0",
+    "type": "constant"
+  },
+  "service_type": "container",
+  "status": "ready",
+  "summary": "A private, self-hosted WakaTime-compatible backend: your editor plugins report coding time to your own Wakapi instance, with a dashboard, a REST API and data kept in your home.",
+  "time_created": "2026-11-28T00:00:00Z",
+  "upstream_access_config": {
+    "base": {
+      "access_method": "container",
+      "customer_access_requests": [
+        {
+          "justification": "Keeps Wakapi's database in the wakapi folder of your home, so your accounts and coding statistics are still there when you stop, remove or re-enroll the instance.",
+          "object": "service:home",
+          "options": "path=wakapi/",
+          "permissions": [
+            "read",
+            "write"
+          ],
+          "required": true
+        }
+      ],
+      "description": "One private Wakapi instance; its data is kept in the wakapi folder of your home between runs and enrollments.",
+      "entries": [
+        {
+          "auth": "app",
+          "name": "web",
+          "path": "/",
+          "port": 3000,
+          "service": "wakapi"
+        }
+      ],
+      "environment": {
+        "wakapi": {
+          "WAKAPI_ALLOW_SIGNUP": "{{ params.WAKAPI_ALLOW_SIGNUP }}",
+          "WAKAPI_PASSWORD_SALT": "{{ params.WAKAPI_PASSWORD_SALT }}",
+          "WAKAPI_PUBLIC_URL": "{{ params.WAKAPI_PUBLIC_URL }}"
+        }
+      },
+      "params": {
+        "schema": {
+          "properties": {
+            "WAKAPI_ALLOW_SIGNUP": {
+              "default": "true",
+              "description": "Whether anyone who can reach the address may sign up for an account. Wakapi has no administrator account set from the enrollment, and the first account that signs up becomes the administrator, so this starts as true: open the instance as soon as it is ready and sign up first. While it is true, anyone who finds the address can also sign up; another account cannot see your statistics, but it uses your instance and storage. After you have signed up, set this to false and save; changing it restarts the instance and keeps your data. With false, existing accounts still sign in, and a signed-in user can still invite someone with an invite link from the settings page.",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "title": "Allow sign-up",
+              "type": "string"
+            },
+            "WAKAPI_PASSWORD_SALT": {
+              "default": "{{ token_urlsafe(24) }}",
+              "description": "A server-side secret that Wakapi mixes into every stored password hash. Generated for this enrollment; keep it or enter your own. It is not a sign-in password: you sign in with the account you sign up for. It must stay the same for as long as you use the data: if it changes, no existing password is accepted any more (API keys and the statistics are not affected), and without a mail server there is no password reset. Because your data lives in your home and outlasts the enrollment, enter the same value when you enroll again; a new enrollment otherwise generates a different one. Save it now: the platform keeps it as a secret and does not show it again.",
+              "format": "password",
+              "minLength": 12,
+              "title": "Password salt",
+              "type": "string",
+              "writeOnly": true
+            },
+            "WAKAPI_PUBLIC_URL": {
+              "default": "https://instance.invalid",
+              "description": "Optional. The address of this instance, for example https://abc123.example.app (shown in the enrollment's instance details). Wakapi works without it: signing in, the dashboard and heartbeats do not use it. It is only put in the invite links Wakapi generates and in the avatar address of the WakaTime-compatible user API, which otherwise show the placeholder https://instance.invalid (the platform needs a value here). Changing it restarts the instance and keeps your data.",
+              "pattern": "^https?://[^/]+$",
+              "title": "Public address (optional)",
+              "type": "string"
+            }
+          },
+          "required": [
+            "WAKAPI_ALLOW_SIGNUP",
+            "WAKAPI_PASSWORD_SALT"
+          ],
+          "type": "object"
+        },
+        "testing_defaults": {
+          "WAKAPI_ALLOW_SIGNUP": "true",
+          "WAKAPI_PASSWORD_SALT": "local-test-salt-only",
+          "WAKAPI_PUBLIC_URL": "https://instance.invalid"
+        }
+      },
+      "resources": "nano",
+      "type": "enrollable",
+      "volumes": {
+        "data": {
+          "exclude": [
+            "*-wal",
+            "*-shm",
+            "*-journal"
+          ],
+          "gid": 65532,
+          "mode": "rw",
+          "source": "{{ home.path }}/wakapi",
+          "type": "persist",
+          "uid": 65532
+        }
+      }
+    }
+  }
+}
