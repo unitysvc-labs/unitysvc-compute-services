@@ -1,0 +1,131 @@
+{
+  "capabilities": [
+    "web-analytics | Counts page views, visitors, sessions, referrers, countries, browsers and devices for websites that load its tracking script, without cookies.",
+    "event-tracking | Records custom events with properties sent by the tracking script or posted to the collection endpoint, and reports on them.",
+    "analytics-api | Serves the collected statistics and manages websites, users and teams through an authenticated REST API."
+  ],
+  "currency": "USD",
+  "description": "UnitySVC runs the official Umami image together with its own PostgreSQL database in a separate stack for each enrollment, with its own HTTPS address. Umami is a self-hosted web analytics application: you register a website in it, add its small tracking script to your pages, and it reports page views, visitors, sessions, referrers, countries, devices and custom events, without cookies and without sharing the data with anyone. The tracking script and the collection endpoint are served by your instance, and your websites load them from its address. The database is backed up to the enrollment's storage, so the data survives stopping and restarting the instance.\n\nEnroll in the base channel and keep or replace the generated administrator password. Sign in at `https://<instance>/` as `admin` with that password, add a website and copy its tracking code into your pages. The instance collects data only while it runs, and a new enrollment has a new address. See How to use this service for full setup and limitations.\n\nYou pay the platform compute cost of both containers while the instance runs, including idle time, and the platform keeps the database backup in the enrollment's storage while it is stopped. Labs adds no markup and receives no seller payout. See the upstream Umami documentation and issue tracker for software-specific help.",
+  "details": {
+    "features": [
+      "Page views, visitors, sessions, referrers, countries, browsers and devices per website",
+      "Custom events, UTM parameters, funnels, retention and other reports",
+      "Cookie-free tracking script served by your own instance",
+      "Several websites, users and teams, share links and a REST API",
+      "The database is backed up to the enrollment's storage, across stops and restarts"
+    ],
+    "links": {
+      "documentation": "https://umami.is/docs",
+      "homepage": "https://umami.is",
+      "source_code": "https://github.com/umami-software/umami"
+    },
+    "protocols": [
+      "http"
+    ]
+  },
+  "instance_spec": "compose.yaml",
+  "name": "umami",
+  "payout_price": {
+    "description": "At cost: UnitySVC Labs receives no seller payout",
+    "price": "0",
+    "type": "constant"
+  },
+  "service_type": "container",
+  "status": "ready",
+  "summary": "A private, self-hosted, cookie-free web analytics server with its own PostgreSQL database, backed up to the enrollment's storage. Add its tracking script to your websites.",
+  "time_created": "2026-11-28T00:00:00Z",
+  "upstream_access_config": {
+    "base": {
+      "access_method": "container",
+      "customer_access_requests": [
+        {
+          "justification": "Keeps a backup of Umami's PostgreSQL database in the storage of this enrollment, so your websites, users and collected statistics are still there when the instance is stopped or restarted.",
+          "object": "service:storage",
+          "permissions": [
+            "read",
+            "write"
+          ],
+          "required": true
+        }
+      ],
+      "description": "One private Umami with its own PostgreSQL database; the websites, users and collected statistics are kept in this enrollment's storage between stops and restarts.",
+      "entries": [
+        {
+          "auth": "app",
+          "name": "web",
+          "path": "/",
+          "port": 3000,
+          "service": "app"
+        }
+      ],
+      "environment": {
+        "app": {
+          "APP_SECRET": "{{ params.APP_SECRET }}",
+          "DATABASE_URL": "postgresql://umami:{{ params.DB_PASSWORD }}@db:5432/umami",
+          "UMAMI_ADMIN_PASSWORD": "{{ params.UMAMI_ADMIN_PASSWORD }}"
+        },
+        "db": {
+          "POSTGRES_PASSWORD": "{{ params.DB_PASSWORD }}"
+        }
+      },
+      "params": {
+        "schema": {
+          "properties": {
+            "APP_SECRET": {
+              "default": "{{ token_urlsafe(32) }}",
+              "description": "The secret Umami derives its sign-in tokens from. Keep the generated value. Umami reads it at every start, so if you change it every signed-in session stops working.",
+              "format": "password",
+              "minLength": 16,
+              "title": "Application secret",
+              "type": "string"
+            },
+            "DB_PASSWORD": {
+              "default": "{{ token_urlsafe(24) }}",
+              "description": "Password of the stack's PostgreSQL database, used by Umami to connect to it. Keep the generated value. The database is reachable only from inside the instance.",
+              "format": "password",
+              "minLength": 12,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "title": "Database password",
+              "type": "string"
+            },
+            "UMAMI_ADMIN_PASSWORD": {
+              "default": "{{ token_urlsafe(24) }}",
+              "description": "Generated for this enrollment; keep it or enter your own (12 to 64 characters). It becomes the password of the `admin` account only when Umami first creates its database; after that the stored password applies and a change here is ignored. Change the password in Umami's own settings. Save it; it is also shown in the enrollment's instance details.",
+              "format": "password",
+              "maxLength": 64,
+              "minLength": 12,
+              "title": "Administrator password",
+              "type": "string"
+            }
+          },
+          "required": [
+            "UMAMI_ADMIN_PASSWORD",
+            "APP_SECRET",
+            "DB_PASSWORD"
+          ],
+          "type": "object"
+        },
+        "testing_defaults": {
+          "APP_SECRET": "local-test-secret-only-0123456789",
+          "DB_PASSWORD": "local-test-db-password",
+          "UMAMI_ADMIN_PASSWORD": "local-test-password-only"
+        }
+      },
+      "resources": {
+        "app": "nano",
+        "db": "nano"
+      },
+      "type": "enrollable",
+      "volumes": {
+        "dbbackup": {
+          "exclude": [
+            "*.tmp"
+          ],
+          "mode": "rw",
+          "source": "{{ storage.path }}/db-backup",
+          "type": "persist"
+        }
+      }
+    }
+  }
+}

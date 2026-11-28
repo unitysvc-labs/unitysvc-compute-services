@@ -1,0 +1,123 @@
+# Umami with its PostgreSQL database, one private stack per enrollment. The database password (and the
+# matching DATABASE_URL), the application secret and the administrator password are bound from the
+# channel's `environment` in offering.json; the values below are the stack's fixed, non-secret settings.
+services:
+  app:
+    image: ghcr.io/umami-software/umami:3.5.0@sha256:b64f40400d77bcadd39cf5c62a1e368c99524ca442024f96e1133355a19a5dbc
+    ports:
+      - 3000
+    # This wraps the image's own start script (scripts/start-docker.sh: check and migrate the database,
+    # update the tracker, start the server) to add two things.
+    # 1. `depends_on` does not order startup on the platform, so wait until PostgreSQL listens.
+    # 2. Umami's first migration creates the account `admin` with the published password `umami`, and has
+    #    no setting or command to choose another. Before the server listens on the network, a copy of it
+    #    is started on 127.0.0.1:3001 only and asked, through Umami's own API, to sign in with the
+    #    published password. If that works (a new database) the password is changed to the bound
+    #    UMAMI_ADMIN_PASSWORD; if it is refused, the password was already set and nothing is done, so a
+    #    restart never resets it. If the change fails the container stops with an error and the next
+    #    start tries again. Only then does the server listen on port 3000.
+    # Backticks and `printenv`, no dollar sign.
+    command:
+      - sh
+      - -c
+      - |
+        until nc -z db 5432; do echo 'waiting for the database'; sleep 2; done
+        PATH=/app/node_modules/.bin:`printenv PATH` node scripts/check-db.js || exit 1
+        node scripts/update-tracker.js
+        node -e "
+        const { spawn } = require('child_process');
+        const base = 'http://127.0.0.1:3001';
+        const post = (path, body, token) => fetch(base + path, {
+          method: 'POST',
+          headers: Object.assign({ 'content-type': 'application/json' }, token ? { authorization: 'Bearer ' + token } : {}),
+          body: JSON.stringify(body),
+        });
+        const server = spawn('node', ['server.js'], {
+          env: Object.assign({}, process.env, { HOSTNAME: '127.0.0.1', PORT: '3001' }),
+          stdio: 'ignore',
+        });
+        const stop = (code) => { server.kill(); process.exit(code); };
+        (async () => {
+          for (let i = 0; ; i++) {
+            try { if ((await fetch(base + '/api/heartbeat')).ok) break; } catch (e) {}
+            if (i > 80) throw new Error('the server did not start');
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+          const login = await post('/api/auth/login', { username: 'admin', password: 'umami' });
+          if (login.status === 401) { console.log('administrator password: already set'); return stop(0); }
+          if (!login.ok) throw new Error('the sign-in check answered ' + login.status);
+          const token = (await login.json()).token;
+          const change = await post('/api/me/password', { currentPassword: 'umami', newPassword: process.env.UMAMI_ADMIN_PASSWORD }, token);
+          if (!change.ok) throw new Error('the password change answered ' + change.status);
+          console.log('administrator password: set from the enrollment');
+          stop(0);
+        })().catch((e) => { console.error('administrator password: ' + e.message); stop(1); });
+        " || exit 1
+        HOSTNAME=0.0.0.0 exec node server.js
+    environment:
+      TZ: Etc/UTC
+    healthcheck:
+      # Port 3000 is opened only after the administrator password step, so this passes only then.
+      test: [CMD-SHELL, "curl -fsS -o /dev/null http://127.0.0.1:3000/api/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      # Generous on purpose: the platform restarts a container that has not passed its check by the end
+      # of this period, and a first start there (sandboxed, waiting for the database, then migrating) is
+      # several times slower than under Docker on a workstation.
+      start_period: 110s
+  db:
+    image: postgres:15-alpine@sha256:e18480a22d6e48f4d816a6696769b1ec09ac73a824c5649e49c7d8b684913f3d
+    # Declared so the platform gives this service a name and lets Umami reach it: a service
+    # without ports gets no address inside the instance, and only declared ports are open between services.
+    ports:
+      - 5432
+    environment:
+      POSTGRES_USER: umami
+      POSTGRES_DB: umami
+      PGDATA: /var/lib/postgresql/data/pgdata
+    # The data directory is scratch: it cannot be kept in the customer's storage, because the copy skips the
+    # empty files and folders PostgreSQL needs and keeps no file modes, so a restored directory does not
+    # start. What persists is a dump in /backup. It is rewritten every five minutes and once more at a
+    # normal stop, and restored on a start whose scratch volume has no `restored` marker, before the server
+    # listens on the network (so Umami never sees a half-restored database). The marker is written only
+    # once the database is ready, and an unmarked data directory is removed before a restore, so a restore
+    # that failed or was interrupted is done again instead of leaving an empty database to be dumped over
+    # the good one. The restore talks to the server on port 5433 (Unix socket only): the image's entrypoint
+    # runs a temporary server on 5432 while it creates the database, and `pg_isready` cannot tell that one
+    # from the real one. The server is stopped with SIGINT (a fast shutdown) sent to the postmaster.
+    # Backticks and `printenv`, no dollar sign.
+    command:
+      - sh
+      - -c
+      - |
+        dump() { pg_dump -U umami -d umami -Fc -f /backup/db.dump.tmp && mv /backup/db.dump.tmp /backup/db.dump; }
+        if [ ! -e /var/lib/postgresql/data/restored ] && [ -s /backup/db.dump ]; then
+          rm -rf "`printenv PGDATA`"
+          docker-entrypoint.sh postgres -c listen_addresses= -p 5433 &
+          until pg_isready -q -p 5433 -U umami -d umami; do sleep 1; done
+          pg_restore -p 5433 -U umami -d umami --no-owner --exit-on-error /backup/db.dump || exit 1
+          kill -INT `head -1 "\`printenv PGDATA\`/postmaster.pid"`
+          while [ -e "`printenv PGDATA`/postmaster.pid" ]; do sleep 1; done
+        fi
+        docker-entrypoint.sh postgres &
+        trap 'dump; kill -INT `head -1 "\`printenv PGDATA\`/postmaster.pid"`; while [ -e "\`printenv PGDATA\`/postmaster.pid" ]; do sleep 1; done; exit 0' TERM INT
+        until pg_isready -q -h 127.0.0.1 -U umami -d umami; do sleep 1; done
+        touch /var/lib/postgresql/data/restored /tmp/restored
+        while true; do for i in `seq 60`; do sleep 5; done; dump; done
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+      - dbbackup:/backup
+    healthcheck:
+      # Ready only once any restore has finished and the server answers on the network.
+      test: [CMD-SHELL, "test -f /tmp/restored && pg_isready -h 127.0.0.1 -U umami -d umami"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      # Generous on purpose: the platform restarts a container that has not passed its check by the end
+      # of this period, and a first start there (sandboxed, on a small size) is several times slower than
+      # under Docker on a workstation.
+      start_period: 110s
+volumes:
+  dbdata:
+  dbbackup:

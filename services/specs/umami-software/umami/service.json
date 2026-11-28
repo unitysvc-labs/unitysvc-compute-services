@@ -1,0 +1,11 @@
+{
+  "display_name": "Umami Web Analytics",
+  "instance_spec_warnings": [
+    "upstream_access_config.base: services.db.volumes[0]: volume 'dbdata' at /var/lib/postgresql/data becomes scratch space (an emptyDir the instance gets at that path, counted in ephemeral-storage): its data survives a container restart but not a replacement of the instance",
+    "upstream_access_config.base: services.db.volumes[1]: volume 'dbbackup' at /backup is persisted: its files are restored before the service starts and copied back while it runs and when it stops, so they outlive the instance. Nothing is deleted from storage; empty files, symlinks and files over 1 GiB are not stored; a crash can lose the last 30 seconds of writes"
+  ],
+  "name": "umami-software/umami",
+  "service_id": "78288047-8826-4119-9c1e-c55bd684af7b",
+  "status": "created",
+  "time_created": "2026-11-28T05:06:54.202163Z"
+}
