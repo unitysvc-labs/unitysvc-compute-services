@@ -1,0 +1,167 @@
+{
+  "capabilities": [
+    "document-management | Stores uploaded documents with tags, correspondents, document types and custom fields, and finds them by full-text search, in a web interface and a REST API.",
+    "ocr | Reads the text of scanned PDFs and images with Tesseract (English, German, French, Italian, Spanish) and keeps a searchable PDF/A copy beside the original."
+  ],
+  "currency": "USD",
+  "description": "UnitySVC runs the official Paperless-ngx image together with its own PostgreSQL database and task broker in a separate stack for each enrollment, with its own HTTPS address. Paperless-ngx is a self-hosted document management system: you upload scans, PDFs, images and office-style text files in the web interface or through its REST API, it reads the text with OCR, keeps the original next to a searchable PDF/A copy, and files each document with tags, correspondents, document types and custom fields. Full-text search, saved views, automatic matching that learns from your filing, workflows, share links, several users with permissions and a mobile-friendly interface are included. The documents, the database and the trained matching model are kept in the enrollment's storage, so they survive stopping and restarting the instance; the search index is rebuilt at each start.\n\nEnroll in the base channel and keep or replace the generated administrator password. Sign in at `https://<instance>/` with the administrator name and password, then drag a file onto the page. Documents arrive only through the web upload, the API or a mail account you connect: there is no consume folder to drop files into. OCR runs on one core, about four seconds a page in a local check. The image's OCR languages are English, German, French, Italian and Spanish. See How to use this service for full setup and limitations.\n\nYou pay the platform compute cost of the three containers while the instance runs, including idle time, and the platform keeps the data in the enrollment's storage while it is stopped. Labs adds no markup and receives no seller payout. See the upstream Paperless-ngx documentation and discussions for software-specific help.",
+  "details": {
+    "features": [
+      "Upload in the browser or through the REST API; OCR makes scans searchable",
+      "Tags, correspondents, document types, storage paths and custom fields",
+      "Full-text search, saved views and a dashboard",
+      "Automatic matching that learns from the documents you have filed",
+      "Several users and groups with per-document permissions, share links, workflows",
+      "Your documents and database are kept in the enrollment's storage, across stops and restarts"
+    ],
+    "links": {
+      "documentation": "https://docs.paperless-ngx.com/",
+      "homepage": "https://docs.paperless-ngx.com/",
+      "source_code": "https://github.com/paperless-ngx/paperless-ngx"
+    },
+    "protocols": [
+      "http"
+    ]
+  },
+  "instance_spec": "compose.yaml",
+  "name": "paperless-ngx",
+  "payout_price": {
+    "description": "At cost: UnitySVC Labs receives no seller payout",
+    "price": "0",
+    "type": "constant"
+  },
+  "service_type": "container",
+  "status": "ready",
+  "summary": "A private, self-hosted document archive: upload scans and PDFs, OCR makes them searchable, and tags and full-text search find them again. Runs with its own PostgreSQL; data is kept between runs.",
+  "time_created": "2026-11-28T00:00:00Z",
+  "upstream_access_config": {
+    "base": {
+      "access_method": "container",
+      "customer_access_requests": [
+        {
+          "justification": "Keeps your documents, a backup of Paperless-ngx's PostgreSQL database and the trained matching model in the storage of this enrollment, so your archive is still there when the instance is stopped or restarted.",
+          "object": "service:storage",
+          "permissions": [
+            "read",
+            "write"
+          ],
+          "required": true
+        }
+      ],
+      "description": "One private Paperless-ngx with its own PostgreSQL database and task broker; the documents and the database are kept in this enrollment's storage between stops and restarts.",
+      "entries": [
+        {
+          "auth": "app",
+          "name": "web",
+          "path": "/",
+          "port": 8000,
+          "service": "web"
+        }
+      ],
+      "environment": {
+        "db": {
+          "POSTGRES_PASSWORD": "{{ params.DB_PASSWORD }}"
+        },
+        "web": {
+          "PAPERLESS_ADMIN_PASSWORD": "{{ params.PAPERLESS_ADMIN_PASSWORD }}",
+          "PAPERLESS_ADMIN_USER": "{{ params.PAPERLESS_ADMIN_USER }}",
+          "PAPERLESS_DBPASS": "{{ params.DB_PASSWORD }}",
+          "PAPERLESS_OCR_LANGUAGE": "{{ params.PAPERLESS_OCR_LANGUAGE }}",
+          "PAPERLESS_SECRET_KEY": "{{ params.PAPERLESS_SECRET_KEY }}"
+        }
+      },
+      "params": {
+        "schema": {
+          "properties": {
+            "DB_PASSWORD": {
+              "default": "{{ token_urlsafe(24) }}",
+              "description": "Password of the stack's PostgreSQL database, used by Paperless-ngx to connect to it. Keep the generated value. The database is reachable only from inside the instance.",
+              "format": "password",
+              "minLength": 12,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "title": "Database password",
+              "type": "string"
+            },
+            "PAPERLESS_ADMIN_PASSWORD": {
+              "default": "{{ token_urlsafe(24) }}",
+              "description": "Generated for this enrollment; keep it or enter your own. It is the administrator's password only when Paperless-ngx first creates that account; after that the stored password applies and a change here is ignored. Change the password in Paperless-ngx itself, under My Profile. Save it; it is also shown in the enrollment's instance details.",
+              "format": "password",
+              "minLength": 12,
+              "title": "Administrator password",
+              "type": "string"
+            },
+            "PAPERLESS_ADMIN_USER": {
+              "default": "admin",
+              "description": "The administrator's user name, created on the first start. A user of that name is created only if none exists; changing it later adds a second administrator with the password above and leaves the first in place.",
+              "maxLength": 150,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9@.+_-]+$",
+              "title": "Administrator name",
+              "type": "string"
+            },
+            "PAPERLESS_OCR_LANGUAGE": {
+              "default": "eng",
+              "description": "The language OCR expects in your documents, as a Tesseract code: eng (English), deu (German), fra (French), ita (Italian) or spa (Spanish). Join several with a plus sign, for example deu+eng; each added language makes OCR slower. Changing it restarts the instance and applies to documents added afterwards.",
+              "pattern": "^(eng|deu|fra|ita|spa)(\\+(eng|deu|fra|ita|spa))*$",
+              "title": "OCR language",
+              "type": "string"
+            },
+            "PAPERLESS_SECRET_KEY": {
+              "default": "{{ token_urlsafe(48) }}",
+              "description": "The key Paperless-ngx signs its sessions and its saved matching model with. Keep the generated value. It is read at every start: if you change it, everyone is signed out and the matching model is trained again.",
+              "format": "password",
+              "minLength": 32,
+              "title": "Secret key",
+              "type": "string"
+            }
+          },
+          "required": [
+            "PAPERLESS_ADMIN_USER",
+            "PAPERLESS_ADMIN_PASSWORD",
+            "PAPERLESS_SECRET_KEY",
+            "DB_PASSWORD",
+            "PAPERLESS_OCR_LANGUAGE"
+          ],
+          "type": "object"
+        },
+        "testing_defaults": {
+          "DB_PASSWORD": "local-test-db-password",
+          "PAPERLESS_ADMIN_PASSWORD": "local-test-password-only",
+          "PAPERLESS_ADMIN_USER": "admin",
+          "PAPERLESS_OCR_LANGUAGE": "eng",
+          "PAPERLESS_SECRET_KEY": "local-test-secret-key-only-0123456789abcdef"
+        }
+      },
+      "resources": {
+        "db": "nano",
+        "redis": "nano",
+        "web": "small"
+      },
+      "type": "enrollable",
+      "volumes": {
+        "dbbackup": {
+          "exclude": [
+            "*.tmp"
+          ],
+          "mode": "rw",
+          "source": "{{ storage.path }}/db-backup",
+          "type": "persist"
+        },
+        "media": {
+          "gid": 1000,
+          "mode": "rw",
+          "source": "{{ storage.path }}/media",
+          "type": "persist",
+          "uid": 1000
+        },
+        "model": {
+          "gid": 1000,
+          "mode": "rw",
+          "source": "{{ storage.path }}/model",
+          "type": "persist",
+          "uid": 1000
+        }
+      }
+    }
+  }
+}

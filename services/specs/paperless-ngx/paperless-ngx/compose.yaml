@@ -1,0 +1,127 @@
+# Paperless-ngx with its PostgreSQL database and its task broker, one private stack per enrollment. The
+# administrator, the secret key and the database password are bound from the channel's `environment` in
+# offering.json; the values below are the stack's fixed, non-secret settings.
+services:
+  web:
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.5.1@sha256:8508853b8a0f8394074260957d0be186c8c64f346973b24a7583de4580f306b9
+    ports:
+      - 8000
+    # depends_on does not order startup on the platform, and the image's own wait for the database gives up
+    # after 60 seconds (its wait for the broker after 25). Wait here without a limit, give the classifier's
+    # folder to the user Paperless runs as (a new volume belongs to root), then hand over to the image's
+    # entrypoint. pg_isready and bash are part of the image. No dollar sign.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - "until pg_isready -q -h db -p 5432 -U paperless && (exec 3<>/dev/tcp/redis/6379) 2>/dev/null; do echo 'waiting for the database and the broker'; sleep 2; done; chown paperless:paperless /usr/src/paperless/model; exec /init"
+    environment:
+      PAPERLESS_REDIS: redis://redis:6379
+      PAPERLESS_DBENGINE: postgresql
+      PAPERLESS_DBHOST: db
+      PAPERLESS_DBPORT: "5432"
+      PAPERLESS_DBNAME: paperless
+      PAPERLESS_DBUSER: paperless
+      # Listen on IPv4 (the image's default, [::], needs IPv6 in the pod).
+      PAPERLESS_BIND_ADDR: 0.0.0.0
+      # The platform's HTTPS front end forwards plain HTTP and says so in X-Forwarded-Proto. With this,
+      # Paperless knows the request was HTTPS, so its sign-in form and its secure cookies work at whatever
+      # address the instance gets. PAPERLESS_URL is left unset on purpose: the address is not known before
+      # enrollment, and without it Paperless accepts any host name.
+      PAPERLESS_PROXY_SSL_HEADER: '["HTTP_X_FORWARDED_PROTO", "https"]'
+      # One web process, one background worker, one OCR thread: the container has one core.
+      PAPERLESS_WEBSERVER_WORKERS: "1"
+      PAPERLESS_TASK_WORKERS: "1"
+      PAPERLESS_THREADS_PER_WORKER: "1"
+      # Nothing can put files in the consume folder from outside; documents arrive through the web upload
+      # and the API. Do not run the folder watcher.
+      PAPERLESS_CONSUMER_DISABLE: "1"
+      PAPERLESS_TIME_ZONE: Etc/UTC
+      # The trained classifier (automatic matching of tags, correspondents and types) in a folder of its
+      # own, so it can be kept without the rest of the data folder.
+      PAPERLESS_MODEL_FILE: /usr/src/paperless/model/classification_model.pickle
+    volumes:
+      # The original and archived documents and their thumbnails. Kept (offering.json, `volumes`).
+      - media:/usr/src/paperless/media
+      # The classifier model, one file. Kept.
+      - model:/usr/src/paperless/model
+      # The search index and the logs. Scratch on purpose: Paperless rebuilds the index from the database
+      # at a start that finds none. A kept index would collect the segment files the copy never deletes,
+      # and after a crash a half-copied one is replaced by an empty index that nothing refills.
+      - data:/usr/src/paperless/data
+    healthcheck:
+      test: [CMD, curl, -fsS, --max-time, "5", "http://127.0.0.1:8000/accounts/login/"]
+      interval: 10s
+      timeout: 8s
+      retries: 6
+      start_period: 110s
+  redis:
+    image: valkey/valkey:9.2.1-alpine@sha256:3ad5a213cb1bc2fd4a113c89b6248a88655a6bf1dda69519d04e03cd3e3d2742
+    # Declared so the platform gives this service a name and lets Paperless reach it.
+    ports:
+      - 6379
+    # Only the queue of background tasks: nothing is saved to disk.
+    command: [valkey-server, --save, "", --appendonly, "no"]
+    healthcheck:
+      test: [CMD, valkey-cli, ping]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 110s
+  db:
+    image: postgres:17-alpine@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73
+    # Declared so the platform gives this service a name and lets Paperless reach it: a service
+    # without ports gets no address inside the instance, and only declared ports are open between services.
+    ports:
+      - 5432
+    environment:
+      POSTGRES_USER: paperless
+      POSTGRES_DB: paperless
+      PGDATA: /var/lib/postgresql/data/pgdata
+    # The data directory is scratch: it cannot be kept in the customer's storage, because the copy skips the
+    # empty files and folders PostgreSQL needs and keeps no file modes, so a restored directory does not
+    # start. What persists is a dump in /backup. It is rewritten every five minutes and once more at a
+    # normal stop, and restored on a start whose scratch volume has no `restored` marker, before the server
+    # listens on the network (so Paperless never sees a half-restored database). The marker is written only
+    # once the database is ready, and an unmarked data directory is removed before a restore, so a restore
+    # that failed or was interrupted is done again instead of leaving an empty database to be dumped over
+    # the good one. The restore talks to the server on port 5433 (Unix socket only): the image's entrypoint
+    # runs a temporary server on 5432 while it creates the database, and `pg_isready` cannot tell that one
+    # from the real one. The server is stopped with SIGINT (a fast shutdown) sent to the postmaster.
+    # Backticks and `printenv`, no dollar sign.
+    command:
+      - sh
+      - -c
+      - |
+        dump() { pg_dump -U paperless -d paperless -Fc -f /backup/db.dump.tmp && mv /backup/db.dump.tmp /backup/db.dump; }
+        if [ ! -e /var/lib/postgresql/data/restored ] && [ -s /backup/db.dump ]; then
+          rm -rf "`printenv PGDATA`"
+          docker-entrypoint.sh postgres -c listen_addresses= -p 5433 &
+          until pg_isready -q -p 5433 -U paperless -d paperless; do sleep 1; done
+          pg_restore -p 5433 -U paperless -d paperless --no-owner --exit-on-error /backup/db.dump || exit 1
+          kill -INT `head -1 "\`printenv PGDATA\`/postmaster.pid"`
+          while [ -e "`printenv PGDATA`/postmaster.pid" ]; do sleep 1; done
+        fi
+        docker-entrypoint.sh postgres &
+        trap 'dump; kill -INT `head -1 "\`printenv PGDATA\`/postmaster.pid"`; while [ -e "\`printenv PGDATA\`/postmaster.pid" ]; do sleep 1; done; exit 0' TERM INT
+        until pg_isready -q -h 127.0.0.1 -U paperless -d paperless; do sleep 1; done
+        touch /var/lib/postgresql/data/restored /tmp/restored
+        while true; do for i in `seq 60`; do sleep 5; done; dump; done
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+      - dbbackup:/backup
+    healthcheck:
+      # Ready only once any restore has finished and the server answers on the network.
+      test: [CMD-SHELL, "test -f /tmp/restored && pg_isready -h 127.0.0.1 -U paperless -d paperless"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      # Generous on purpose: the platform restarts a container that has not passed its check by the end
+      # of this period, and a first start there (sandboxed, on a small size) is several times slower than
+      # under Docker on a workstation.
+      start_period: 110s
+volumes:
+  media:
+  model:
+  data:
+  dbdata:
+  dbbackup:
