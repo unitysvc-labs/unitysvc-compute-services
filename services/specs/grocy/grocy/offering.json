@@ -1,0 +1,120 @@
+{
+  "capabilities": [
+    "grocery-inventory | Tracks household stock by product, location, amount, price and due date, with barcode lookup, and shows what expires soon or is below its minimum amount, in a web interface and over a REST API.",
+    "shopping-list | Keeps shopping lists that can be filled from products below their minimum stock and from recipes, and books bought items into stock.",
+    "meal-planning | Stores recipes that check their ingredients against the stock and plans meals by day in a weekly meal plan.",
+    "chore-tracking | Schedules recurring household chores and one-off tasks, optionally assigned to users, and records when each was done."
+  ],
+  "currency": "USD",
+  "description": "UnitySVC runs Grocy in a separate container for each enrollment, with its own HTTPS address. Grocy is a self-hosted groceries and household management application: it keeps track of what is in your pantry, fridge and freezer with amounts, locations, prices and due dates, tells you what expires soon or is running low, and builds shopping lists from it. It also holds recipes that know which ingredients you have, a weekly meal plan, recurring chores and tasks, battery charge cycles, equipment manuals and a calendar, and it can look up products by barcode with a scanner or the device camera. Everything the web interface does is also available through a REST API. Grocy publishes no container image of its own; this service uses the LinuxServer.io image that Grocy's README points to. The data is kept in the instance's own SQLite database and files folder, stored in the `grocy` folder of your home, so it survives stopping the instance and even removing it and enrolling again.\n\nEnroll in the base channel and keep or replace the generated administrator password. Sign in at `https://<instance>/` as `admin` with that password; a new Grocy normally starts with a published default password, and this recipe makes Grocy create the account with yours instead, so the default never exists on your instance. Then add your locations and products and record a purchase. The address needs no configuration. You can run one Grocy instance at a time. See How to use this service for full setup and limitations.\n\nYou pay the selected channel's platform compute cost while the instance runs, including idle time, and the platform keeps the data in your home while it is stopped. Labs adds no markup and receives no seller payout. See the upstream Grocy website, subreddit and issue tracker for software-specific help.",
+  "details": {
+    "features": [
+      "Stock overview with locations, amounts, prices and due dates, and warnings for products that expire soon or run low",
+      "Purchase, consume, transfer and inventory workflows, with barcode scanning by scanner or device camera",
+      "Shopping lists filled from missing stock and recipes",
+      "Recipes with stock fulfillment and a weekly meal plan",
+      "Recurring chores, tasks, battery charge cycles, equipment and a calendar",
+      "REST API with API keys and a built-in API browser",
+      "Your data is kept in your home, across stops, restarts and re-enrollment"
+    ],
+    "links": {
+      "documentation": "https://grocy.info",
+      "homepage": "https://grocy.info",
+      "source_code": "https://github.com/grocy/grocy"
+    },
+    "protocols": [
+      "http"
+    ]
+  },
+  "instance_spec": "compose.yaml",
+  "name": "grocy",
+  "payout_price": {
+    "description": "At cost: UnitySVC Labs receives no seller payout",
+    "price": "0",
+    "type": "constant"
+  },
+  "service_type": "container",
+  "status": "ready",
+  "summary": "A private, self-hosted groceries and household manager: track stock and due dates, shopping lists, recipes, meal plans and chores on your own Grocy, with data kept in your home between runs.",
+  "time_created": "2026-11-28T00:00:00Z",
+  "upstream_access_config": {
+    "base": {
+      "access_method": "container",
+      "customer_access_requests": [
+        {
+          "justification": "Keeps Grocy's database, settings and uploaded files in the grocy folder of your home, so your household data is still there when you stop, remove or re-enroll the instance.",
+          "object": "service:home",
+          "options": "path=grocy/",
+          "permissions": [
+            "read",
+            "write"
+          ],
+          "required": true
+        }
+      ],
+      "description": "One private Grocy; its data is kept in the grocy folder of your home between runs and enrollments.",
+      "entries": [
+        {
+          "auth": "app",
+          "name": "web",
+          "path": "/",
+          "port": 80,
+          "service": "grocy"
+        }
+      ],
+      "environment": {
+        "grocy": {
+          "GROCY_CURRENCY": "{{ params.GROCY_CURRENCY }}",
+          "GROCY_HTTP_PASSWORD": "{{ params.GROCY_HTTP_PASSWORD }}"
+        }
+      },
+      "params": {
+        "schema": {
+          "properties": {
+            "GROCY_CURRENCY": {
+              "default": "USD",
+              "description": "The three-letter ISO 4217 code of the currency Grocy shows prices in, for example USD, EUR or GBP. Grocy only uses it to format amounts and converts nothing. Changing it restarts the instance and keeps your data.",
+              "pattern": "^[A-Za-z]{3}$",
+              "title": "Currency",
+              "type": "string"
+            },
+            "GROCY_HTTP_PASSWORD": {
+              "default": "{{ token_urlsafe(24) }}",
+              "description": "Generated for this enrollment; keep it or enter your own. It becomes the password of the administrator, `admin`, only when Grocy first creates its database: your data lives in your home, so if the database already exists (an earlier enrollment, or a later restart) this value is ignored and the existing password still applies. Change the password in Grocy under the user menu > Change password. Save it now: the platform keeps it as a secret and does not show it again.",
+              "format": "password",
+              "minLength": 12,
+              "title": "Administrator password",
+              "type": "string",
+              "writeOnly": true
+            }
+          },
+          "required": [
+            "GROCY_HTTP_PASSWORD"
+          ],
+          "type": "object"
+        },
+        "testing_defaults": {
+          "GROCY_CURRENCY": "USD",
+          "GROCY_HTTP_PASSWORD": "local-test-password-only"
+        }
+      },
+      "resources": "nano",
+      "type": "enrollable",
+      "volumes": {
+        "data": {
+          "exclude": [
+            "*-wal",
+            "*-shm",
+            "*-journal",
+            "viewcache/**"
+          ],
+          "gid": 911,
+          "mode": "rw",
+          "source": "{{ home.path }}/grocy",
+          "type": "persist",
+          "uid": 911
+        }
+      }
+    }
+  }
+}

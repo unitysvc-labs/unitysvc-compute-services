@@ -1,0 +1,51 @@
+# Grocy, one private instance per enrollment. The administrator password is bound from the channel's
+# `environment` in offering.json; nothing in this file is secret. Grocy publishes no image of its own; its
+# README points to the LinuxServer.io image used here.
+# Grocy creates its first user, `admin`, with the published password `admin`, and has no command line to change
+# it. Its database migration does, however, still honour the two settings of older versions, HTTP_USER and
+# HTTP_PASSWORD: when they are defined it creates that user with that password instead of the default one. So on
+# a data folder with no database the entrypoint below adds the two settings to Grocy's config.php (the file
+# upstream tells you to edit), and Grocy reads the password itself from the bound GROCY_HTTP_PASSWORD
+# environment variable, which overrides the value in the file. The value written to the file is a random one
+# that nobody knows, and the container stops if the variable is missing, so the default password never exists
+# on the instance. When the data folder already holds a database (a restore, or a restart) nothing is changed
+# and the settings are ignored. The script has no dollar sign, so neither Docker Compose nor the platform
+# rewrites it; it then starts the image's own entrypoint (/init).
+services:
+  grocy:
+    image: lscr.io/linuxserver/grocy:v4.7.1-ls352@sha256:ef5ea5094aa2ed32df74528c4bdd94713679038c97add02045d881550c2a59a8
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        if [ ! -f /config/data/grocy.db ]; then
+          test -n "`printenv GROCY_HTTP_PASSWORD`" &&
+          mkdir -p /config/data &&
+          { test -s /config/data/config.php || cp /app/www/config-dist.php /config/data/config.php; } &&
+          { grep -q "^Setting('HTTP_USER', 'admin');" /config/data/config.php || printf "\nSetting('HTTP_USER', 'admin');\nSetting('HTTP_PASSWORD', '%s');\n" "`php -r 'echo bin2hex(random_bytes(24));'`" >> /config/data/config.php; } &&
+          grep -q "^Setting('HTTP_PASSWORD', '[0-9a-f]\{48\}');" /config/data/config.php ||
+          { echo "first-run setup failed: the administrator password is not set" >&2; exit 1; }
+        fi
+        exec /init
+    ports:
+      - 80
+    environment:
+      PUID: "911"
+      PGID: "911"
+      TZ: Etc/UTC
+    volumes:
+      # Grocy's data folder: the SQLite database (grocy.db), config.php and the uploaded files (storage/). The
+      # channel decides whether this volume persists, in the grocy folder of the customer's home (offering.json,
+      # `volumes`); under plain Docker it is an ordinary named volume. The rest of /config (nginx and PHP
+      # settings, logs, the self-signed certificate) is rebuilt at every start and is not kept.
+      - data:/config/data
+    healthcheck:
+      # Follows redirects on purpose: the first request to a new or updated Grocy is sent to `/`, where Grocy
+      # creates or migrates its database, so the instance is ready only once the sign-in page answers.
+      test: [CMD, curl, -fsSL, -o, /dev/null, "http://127.0.0.1/login"]
+      interval: 10s
+      timeout: 30s
+      retries: 3
+      start_period: 110s
+volumes:
+  data:

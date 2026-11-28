@@ -1,0 +1,28 @@
+{
+  "display_name": "Grocy Groceries and Household Management",
+  "documents": {
+    "Connectivity test": {
+      "$doc_preset": "container_connectivity"
+    },
+    "How to use this service": {
+      "category": "getting_started",
+      "file_path": "usage.md",
+      "is_public": true,
+      "mime_type": "markdown"
+    },
+    "Using container services": {
+      "$doc_preset": "container_description"
+    }
+  },
+  "list_price": {
+    "type": "base_cost"
+  },
+  "name": "grocy/grocy",
+  "service_options": {
+    "enrollment": {
+      "limit_per_customer": 1
+    }
+  },
+  "status": "ready",
+  "time_created": "2026-11-28T00:00:00Z"
+}
